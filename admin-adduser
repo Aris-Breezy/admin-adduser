@@ -1,0 +1,173 @@
+#!/bin/sh
+export PATH=$PATH:/usr/sbin
+A=($*)
+tmp=0
+for args in $*
+do
+    case $args in
+        --special)
+            SPECIAL="1";
+            ;;
+        --transfered)
+            TRANSFERED="1";
+            ;;
+        --admin)
+            ADMIN="1";
+            ;;
+       --help|-h)
+           HELP="1";
+          ;;
+        --printer)
+            PRINTERS="1";
+            ;;
+        hp210|hp211|hp206)
+            ;;
+        --no-delete)
+            tmp=1
+            ;;
+        *)  # No more options
+            echo "BAD arguments, type -h or --help for more info :) "
+            exit 1;
+            ;;
+    esac
+done
+
+if [ "$HELP" == "1" ];then
+      echo "--special "
+      echo "--transfered"
+      echo "--admin"
+      echo "--printer 'thenameofthePrinter'"
+      echo "--no delete (the script won't delete the tmp files)"
+      exit 1
+fi
+if [ "$PRINTERS" != "1" ];then
+      PRINTER=hp$(echo $SSH_CONNECTION | awk -F"." '{print $3}')
+      if [ "$PRINTER" != "hp206" ] && [ "$PRINTER" != "hp211" ];then
+         PRINTER=hp210
+      fi
+      for args in $*
+      do
+            case $args in
+                hp210|hp211|hp206)
+                 echo "Invalid argument,try again"
+                 exit 1
+            esac
+      done
+
+elif [ "$PRINTERS" == "1" ];then
+        for args in $*
+        do
+
+            for i in "${!A[@]}"; do
+                if [ "${A[i]}" == "$args" ]; then
+                      let i++;
+                      if [  $args == "--printer" ];then
+                            POS=$i
+                      fi
+                      if [  $args == "hp210" ] || [ $args == "hp211" ] || [ $args == "hp206" ];then
+                            POSP=$i
+                      fi
+                fi
+            done
+        done
+
+        let X=$POSP-$POS
+        if [ "$X" == "1" ];then
+               for arg in $*
+               do
+
+                       case $arg in
+                       hp206|hp210|hp211)
+                              PRINTER="$arg"
+                       esac
+               done
+        else
+              echo "Invalid  selection for  arguments , e.g --printer hp210"
+              exit 1
+        fi
+fi
+ping_attempts=1
+status=`lpq -P$PRINTER`
+count=$(ping -c $ping_attempts $PRINTER | awk -F, '/received/{print $2*1}')
+if [ $count -eq 0 ]
+then
+      echo "The printer:$PRINTER is down , contact your local administrator."
+elif [ $count -eq 1 ]
+then
+      echo "The printer:$PRINTER is on the network"
+      echo "$status"
+fi
+
+if [ "$TRANSFERED" != "1" ]
+then
+        echo -n "Enter UNIX username (eg. p06101): ";
+        read USRNAME;
+else
+        echo -n "Enter year["`date +%y`"]: "
+        read YEAR
+        if [ -z $YEAR ]
+        then
+                YEAR=`date +%y`
+        fi
+        ams=`getent passwd | grep -E "^p${YEAR}.+$" | sed -r 's/^p'+$YEAR+'([0-9]{3}).+$/\1/' | sort -rn | head -n30`
+        next=1000
+        for i in $ams
+        do
+                if [ $i -gt 900 -a $i -lt $next ]
+                then
+                        next=$i
+                fi
+        done
+        next=`echo $next-1 | bc`
+        USRNAME="p"${YEAR}${next}
+        echo "Username: $USRNAME"
+fi
+
+
+
+if [ "$SPECIAL" != "1" ];
+then
+        MATCHES=`echo $USRNAME | egrep -e "^p[0-9]{5}$|^mpsp[0-9]{5}$|^mppl[0-9]{5}$"`;
+        if [ -z $MATCHES ];
+        then
+                echo -e "Username[$USRNAME] doesn't match simple users, username pattern(p#####, mpsp#####, mppl#####).\nTry using --special parameter";
+                exit 1;
+        fi
+fi
+
+echo -n "User's Full Name (Lastname Firstname): "
+read GECOS
+echo -n "Creating User w/ Username[$USRNAME] & Fullname[$GECOS]. Sure?[y/N]"
+read APANTISI
+case $APANTISI in
+        [Yy][Ee][Ss]|[Yy])
+                echo "ok"
+                ;;
+        *)
+                echo "No account created for user $USRNAME"
+                exit 1
+                ;;
+esac
+
+sudo smbldap-useradd -a -c "$GECOS" -m $USRNAME || exit
+sudo chmod 0700 /home/$USRNAME || exit
+NEWPASS=`/etc/admins/admin-gen-pass $USRNAME`
+( echo -e "$NEWPASS\n$NEWPASS" | sudo smbldap-passwd $USRNAME ) || exit
+
+if [ "$ADMIN" == "1" ];
+then
+    UIDa=`getent passwd | grep ^$USRNAME | awk -F ':' '{print $3}'| uniq`;
+    adduser $USRNAME --uid `getent passwd | grep $USRNAME | awk -F ':' '{print $3}'| uniq` --shell /bin/bash --ingroup 513;
+    /etc/admins/admin-ldap-domainadmin-rights.py grant $USRNAME;
+    #/etc/admins/admin:
+    echo "************************************************";
+    echo "*DONT FORGET TO CHANGE THE DEFAULT PASSWORD !!!*";
+    echo "************************************************";
+    exit 0;
+fi
+
+
+sudo edquota -p quotauser -u $USRNAME -f /u1 || exit
+/etc/admins/admin-gen-form $PRINTER $USRNAME $tmp || exit
+
+

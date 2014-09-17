@@ -1,4 +1,6 @@
 admin-adduser
 =============
 
-script in bash that add users (playing with samba and ldap ),special edit auto printers
+admin-adduser is a script written in bash , 
+which add specific users in ldap 
+furthermore the script guess the nearest printer via ssh connection.
